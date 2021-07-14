@@ -1,0 +1,21 @@
+Metadata-Version: 1.1
+Name: hashring
+Version: 1.0.0
+Summary: Sangfor Service
+Home-page: http://www.sangfor.org/
+Author: fangfei
+Author-email: 35981@sangfor.com
+License: UNKNOWN
+Description: ======
+        SANGFOR RING
+        ======
+
+Platform: UNKNOWN
+Classifier: Environment :: Sangfor
+Classifier: Intended Audience :: Information Technology
+Classifier: Intended Audience :: System Administrators
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Operating System :: POSIX :: Linux
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 2
+Classifier: Programming Language :: Python :: 2.7

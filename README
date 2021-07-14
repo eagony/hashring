@@ -1,0 +1,20 @@
+## 课题
+- 实现一致性Hash算法
+
+## 功能列表
+- 支持向Hash Ring中添加设备
+- 支持从Hash Ring中删除设备
+- 支持Ring File和Builder File管理（读写）
+- 支持rebalance
+
+## 课程目标
+- 实现Hash Ring的相关功能，支持命令行操作
+- 代码通过flake8检查
+- 完成单元测试编码并保证案例执行通过
+
+## 环境要求
+- pycharm或其他
+- python2.7
+
+## 备注
+- 设计参考见doc下的设计文档
