@@ -22,3 +22,13 @@ class ErrorFileSaveFailed(Exception):
     """
     def __str__(self):
         return "文件保存错误！"
+
+
+class ErrorInvalidParam(Exception):
+    u"""参数无效错误.
+    """
+    def __init__(self, msg):
+        self.msg = msg
+
+    def __str__(self):
+        return "无效的参数：%s，请检查后重试！".format(self.msg)
