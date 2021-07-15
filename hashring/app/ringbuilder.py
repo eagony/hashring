@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
-import hashlib
 import json
-import random
+import hashlib
+from hashring.common import log
 from hashring.common import exceptions as exc
 
 BUILDER_FILE_PATH = '../Builder.json'
 RING_FILE_PATH = '../Ring.json'
+LOG = log.mylog()
 
 
 class Device(object):
@@ -31,6 +32,7 @@ class DataManager(object):
         """
         with open(filename, 'r', encoding='utf-8') as fp:
             return cls(json.load(fp))
+        LOG.error('加载文件%s出错。'.format(filename))
         raise exc.ErrorFileOpenFailed
 
     def save(self, filename):
@@ -40,7 +42,164 @@ class DataManager(object):
         """
         with open(filename, 'w', encoding='utf-8') as fp:
             json.dump(self.data, fp, ensure_ascii=False)
+        LOG.error('保存文件%s出错。'.format(filename))
         raise exc.ErrorFileSaveFailed
+
+
+class BuilderManager(object):
+    """BuilderManager，用于维护BuilderFile"""
+
+    def __init__(self):
+        # 设备ID到设备信息的映射
+        self.dev_id_to_dev_info = dict()
+        # BuilderFile的文件管理器
+        self.data_manager = DataManager().load(BUILDER_FILE_PATH)
+
+    def add(self, dev_info):
+        u"""新添加设备信息
+
+        :param dev_info: 待添加的设备信息
+        """
+        self.data_manager.data.append(dev_info)
+        self.data_manager.save(BUILDER_FILE_PATH)
+        self.dev_id_to_dev_info[dev_info['dev_id']] = dev_info
+
+    def remove(self, dev_id):
+        u"""移除设备信息
+
+        :param dev_id: 待移除的设备id
+        """
+        if dev_id not in self.dev_id_to_dev_info.keys():
+            raise exc.ErrorInvalidParam('id，不存在此id')
+        # 从设备列表中移除
+        for dev in self.data_manager.data:
+            if dev['dev_id'] == dev_id:
+                self.data_manager.data.remove(dev)
+        self.data_manager.save()
+        # 移除设备id到设备信息的映射
+        del self.dev_id_to_dev_info[dev_id]
+
+    def update(self, dev_id, weight, part_num):
+        u"""更新设备信息
+
+        :param dev_id: 待更新的设备的id
+        :param weight: 设备新的weight值
+        :param part_num: 设备新的part_num值
+        """
+        # 如果不存在此设备
+        if dev_id in self.dev_id_to_dev_info.keys():
+            dev = self.dev_id_to_dev_info[dev_id]
+        else:
+            raise exc.ErrorInvalidParam('id，不存在此id')
+        # 更新weight
+        if weight > 0 and weight % 100 == 0 and weight != dev['dev_weight']:
+            dev['dev_weight'] = weight
+            dev['part_num'] = part_num
+        else:
+            raise exc.ErrorInvalidParam('weight')
+
+    def get_by_id(self, dev_id):
+        u"""通过设备id返回设备信息。
+
+        :param dev_id: 要查询的设备的id
+        :return 对应id的设备信息，无则返回None
+        """
+        if dev_id not in self.dev_id_to_dev_info.keys():
+            return None
+        return self.dev_id_to_dev_info[dev_id]
+
+    def get_first(self):
+        u"""返回第一个设备。
+
+        :return 设备信息，无则返回None
+        """
+        if len(self.dev_id_to_dev_info) >= 1:
+            return self.dev_id_to_dev_info[0]
+        return None
+
+
+class RingManager(object):
+    """RingManager，用于维护RingFile"""
+    def __init__(self):
+        # 分区比例，乘以weight后得到分区数量
+        self.p = 0.02
+        # 虚拟分区到设备id的映射
+        self.ring = dict()
+        # 虚拟分区列表
+        self._sorted_keys = list()
+        # RingFile的文件管理器
+        self.data_manager = DataManager().load(RING_FILE_PATH)
+
+    def add(self, dev_info):
+        u"""新增虚拟分区的映射
+
+        :param dev_info: 设备信息
+        """
+        # 保存虚拟设备到设备id的映射
+        for i in range(dev_info['part_num']):
+            key = gen_key('device_%s_p%s' % (dev_info['id'], i))
+            self.ring[key] = dev_info['id']
+            self._sorted_keys.append(key)
+        self.rebanlance()
+
+    def remove(self, dev_id, part_num):
+        u"""新增虚拟分区的映射
+
+        :param dev_id: 设备id
+        :param part_num: 设备分区数量
+        """
+        # 删除虚拟分区到磁盘的映射
+        for i in range(0, part_num):
+            key = gen_key('device_%s_p%s' % (dev_id, i))
+            if self.ring[key]:
+                del self.ring[key]
+            else:
+                raise KeyError
+            self._sorted_keys.remove(key)
+        self.rebanlance()
+
+    def update(self, dev_id, old_part_num, new_part_num):
+        u"""更新设备和对应的虚拟分区
+
+        :param dev_id: 设备id
+        :param old_part_num: 设备的原分区数量
+        :param new_part_num: 沈北的新分区数量
+        """
+        if new_part_num > old_part_num:
+            # 增加设备的分区数量
+            for i in range(old_part_num, new_part_num):
+                key = gen_key('device_%s_p%s' % (dev_id, i))
+                self.ring[key] = dev_id
+                self._sorted_keys.append(key)
+        else:
+            # 减少设备的分区数量
+            for i in range(new_part_num, old_part_num):
+                key = gen_key('device_%s_p%s' % (dev_id, i))
+                del self.ring[key]
+                self._sorted_keys.remove(key)
+        self.remove()
+
+    def hash_dev(self, key):
+        u"""获取指定key hash到的设备.
+
+        :param key: 指定key
+        :return 设备id
+        """
+        if not self.ring:
+            return None
+
+        key = gen_key(key)
+        for node in self._sorted_keys:
+            # 返回就近节点
+            if key <= node:
+                return self.ring[node]
+        # 如果没有对应的匹配，返回第一个设备的id
+
+    def rebanlance(self):
+        u"""重新平衡ring."""
+        self._sorted_keys.sort()
+        # 保存到本地JSON文件
+        self.data_manager.save(RING_FILE_PATH)
 
 
 def gen_key(key):
@@ -56,56 +215,27 @@ class RingBuilder(object):
     def __init__(self):
         # 分区比例，乘以weight后得到分区数量
         self.p = 0.02
-        # 虚拟分区到设备id的映射
-        self.ring = dict()
-        # 设备列表
-        self.dev_list = list()
-        # 虚拟分区列表
-        self._sorted_keys = list()
-        # 设备ID到设备信息的映射
-        self.dev_id_to_dev_info = dict()
+        # RingFile的管理器
+        self.ring_manager = RingManager()
+        # BuilderFile的管理器
+        self.builder_manager = BuilderManager()
 
-    def add_dev(self, dev):
+    def __enter__(self):
+        return self
+
+    def add_dev(self, dev_info):
         u"""添加设备.
 
         :param dev: 待添加的设备信息
         """
-        # 校验参数是否合法，这里假设id为正整数，
-        # name不为空，weight为正数且为整百，part_num为正整数
-        dev_info = dict()
-        if isinstance(dev.id, int) and dev.id > 0:
-            # 如果id不存在则添加到文件
-            if dev.id in self.dev_id_to_dev_info.keys():
-                raise exc.ErrorInvalidParam('id,此id已存在')
-            else:
-                dev_info['dev_id'] = dev.id
-        else:
-            raise exc.ErrorInvalidParam('id')
+        # 如果设备id已存在
+        if self.builder_manager.get_by_id(dev_info['dev_id']) is not None:
+            LOG.error('RingBuilder.add_dev: 此id已存在。')
+            raise exc.ErrorInvalidParam('id,此id已存在')
+        dev_info['part_num'] = int(dev_info['weight'] * self.p)
 
-        if dev.name != "":
-            dev_info['dev_name'] = dev.name
-        else:
-            raise exc.ErrorInvalidParam('name')
-
-        if dev.weight > 0 and dev.weight % 100 == 0:
-            dev_info['dev_weight'] = dev.weight
-            dev_info['part_num'] = int(dev.weight * self.p)
-        else:
-            raise exc.ErrorInvalidParam('weight')
-
-        # 保存到设备列表
-        self.dev_list.append(dev_info)
-        # 保存到设备id到设备信息的映射
-        self.dev_id_to_dev_info[dev.id] = dev_info
-        # 保存虚拟设备到设备id的映射
-        for i in range(dev_info['part_num']):
-            key = gen_key('device_%s_p%s' % (dev.id, i))
-            self.ring[key] = dev.id
-            self._sorted_keys.append(key)
-
-        # 保存设备信息到本地JSON文件
-        write_to_json(BUILDER_FILE_PATH, self.dev_list)
-        self.rebalance()
+        self.builder_manager.add(dev_info)
+        self.ring_manager.add(dev_info)
 
     def update_dev(self, dev_id, weight=None):
         u"""更新设备信息.
@@ -113,80 +243,24 @@ class RingBuilder(object):
         :param dev_id: 设备ID
         :param weight: 权重
         """
-        if dev_id in self.dev_id_to_dev_info.keys():
-            dev = self.dev_id_to_dev_info[dev_id]
-        else:
-            raise exc.ErrorInvalidParam('id，不存在此id')
-        old_part_num = dev['part_num']
-        # 更新weight
-        if weight > 0 and weight % 100 == 0 and weight != dev['dev_weight']:
-            dev['dev_weight'] = weight
-            dev['part_num'] = int(weight * self.p)
-        else:
-            raise exc.ErrorInvalidParam('weight')
-
-        if dev['part_num'] > old_part_num:
-            # 扩容虚拟分区到设备的映射
-            for i in range(old_part_num, dev['part_num']):
-                # TODO 这里需不需要考虑哈希冲突的情况
-                key = gen_key('device_%s_p%s' % (dev['dev_id'], i))
-                self.ring[key] = dev['dev_id']
-                self._sorted_keys.append(key)
-        else:
-            # 缩容
-            for i in range(dev['part_num'], old_part_num):
-                key = gen_key('device_%s_p%s' % (dev_id, i))
-                del self.ring[key]
-                self._sorted_keys.remove(key)
-
-        write_to_json(BUILDER_FILE_PATH, self.dev_list)
-        self.rebalance()
+        old_part_num = self.builder_manager.get_by_id(dev_id)['part_num']
+        new_part_num = int(weight * self.p)
+        self.builder_manager.update(dev_id, weight, new_part_num)
+        self.ring_manager.update(dev_id, old_part_num, new_part_num)
 
     def remove_dev(self, dev_id):
         u"""删除设备.
 
         :param dev_id: 待删除的设备ID
         """
-        if dev_id not in self.dev_id_to_dev_info.keys():
-            raise exc.ErrorInvalidParam('id，不存在此id')
-        # 删除虚拟分区到磁盘的映射
-        for i in range(0, self.dev_id_to_dev_info[dev_id]['part_num']):
-            key = gen_key('device_%s_p%s' % (dev_id, i))
-            if self.ring[key]:
-                del self.ring[key]
-            else:
-                raise KeyError
-            self._sorted_keys.remove(key)
-
-        # 从设备列表中移除
-        for dev in self.dev_list:
-            if dev['dev_id'] == dev_id:
-                self.dev_list.remove(dev)
-
-        write_to_json(BUILDER_FILE_PATH, self.dev_list)
-        self.rebalance()
-
-    def rebalance(self):
-        u"""重新平衡ring."""
-        self._sorted_keys.sort()
-        # 保存到本地JSON文件
-        write_to_json(RING_FILE_PATH, self.ring)
+        temp_dev = self.builder_manager.get_by_id(dev_id)
+        self.builder_manager.remove(dev_id)
+        self.ring_manager.remove(dev_id, temp_dev['part_num'])
 
     def hash_dev(self, key):
         u"""获取指定key hash到的设备."""
-        if not self.ring:
-            return 0
-
-        key = gen_key(key)
-        for node in self._sorted_keys:
-            # 返回就近节点
-            if key <= node:
-                return self.ring[node]
+        dev = self.ring_manager.hash_dev(key)
+        if dev is not None:
+            return dev
         # 如果没有对应的匹配，返回第一个设备的id
-        return self.dev_list[0]['dev_id']
-
-
-# 将数据写入到json文件
-def write_to_json(filename, data):
-    with open(filename, 'w', encoding='utf-8') as fp:
-        json.dump(data, fp, ensure_ascii=False)
+        return self.builder_manager.get_first()
