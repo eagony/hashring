@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function
+
+import json
 from sys import argv as sys_argv, exit
 
 from hashring.app.ringbuilder import RingBuilder
@@ -55,11 +57,13 @@ class Commands(object):
             dev_id = int(sys_argv[2])
         except exc.ErrorInvalidParam:
             LOG.error('输入的dev_id有误。')
+            raise exc.ErrorInvalidParam('dev_id')
 
         try:
             new_weight = int(sys_argv[3])
         except exc.ErrorInvalidParam:
             LOG.error('输入的weight有误。')
+            raise exc.ErrorInvalidParam('weight')
 
         with RingBuilder as rb:
             rb.update_dev(dev_id, new_weight)
@@ -71,6 +75,7 @@ class Commands(object):
             dev_id = int(sys_argv[2])
         except exc.ErrorInvalidParam:
             LOG.error('输入的dev_id有误。')
+            raise exc.ErrorInvalidParam('dev_id')
 
         with RingBuilder as rb:
             rb.remove_dev(dev_id)
@@ -86,8 +91,8 @@ class Commands(object):
         u"""获取指定key hash到的设备."""
         key = sys_argv[2]
         if len(key) == 0:
-            exc.ErrorInvalidParam('key')
             LOG.error('key is empty.')
+            raise exc.ErrorInvalidParam('key')
 
         with RingBuilder as rb:
             rb.hash(key)

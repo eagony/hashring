@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import json
 import unittest
 
 from hashring.app.ringbuilder import RingBuilder, Device
